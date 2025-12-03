@@ -1,7 +1,17 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite';
+// Se você usa React, descomente a linha abaixo
+// import react from '@vitejs/plugin-react'; 
 
-// https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  // Se estiver usando o plugin, descomente esta linha:
+  // plugins: [react()], 
+
+  build: {
+    rollupOptions: {
+      external: [
+        'fs',    
+        'path',  
+      ],
+    },
+  },
 })
