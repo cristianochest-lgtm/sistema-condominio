@@ -212,13 +212,15 @@ export default function App() {
         } catch (error) {
             console.error("Erro ao receber atualização de dados (onSnapshot):", error);
             setMessage({ text: "Erro ao atualizar histórico. Verifique a conexão.", type: "error" });
-            clearMessage();
+            // Deixamos a mensagem de erro visível para o usuário diagnosticar
+            // clearMessage(); 
         }
     }, (error) => {
         // Callback de erro do listener
         console.error("Erro no listener onSnapshot:", error);
         setMessage({ text: "Falha na conexão em tempo real. Erro de permissão.", type: "error" });
-        clearMessage();
+        // Deixamos a mensagem de erro visível para o usuário diagnosticar
+        // clearMessage(); 
     });
 
     // Função de limpeza: interrompe a escuta quando o componente é desmontado
@@ -246,7 +248,7 @@ export default function App() {
   const handleAdd = async () => {
     if (!isAuthReady || !userId) {
         setMessage({ text: "Aguarde a autenticação para registrar.", type: "error" }); 
-        clearMessage();
+        // Deixamos a mensagem de erro visível
         return;
     }
     
@@ -268,7 +270,8 @@ export default function App() {
           observacao: observacao || "Sem observação",
         });
 
-        // Limpa os campos
+        // Os campos são limpos APENAS após o sucesso do addDoc.
+        // Se eles não limparam, é porque o addDoc falhou.
         setEmpresa("");
         setObservacao("");
         
@@ -282,8 +285,9 @@ export default function App() {
         clearMessage();
     } catch (error) {
         console.error("Erro ao adicionar registro:", error);
-        setMessage({ text: "Erro ao confirmar registro. Tente novamente.", type: "error" });
-        clearMessage();
+        // Deixamos a mensagem de erro visível para o usuário
+        setMessage({ text: "Erro ao confirmar registro. Verifique as permissões de gravação.", type: "error" });
+        // clearMessage() removido daqui para que a mensagem de erro persista
     }
   };
 
@@ -349,7 +353,8 @@ export default function App() {
       
       {/* Cabeçalho */}
       <header className="bg-blue-800 text-white shadow-xl mb-8">
-        <div className="max-w-5xl mx-auto p-6 text-center"> {/* Aumenta a largura máxima para 5xl */}
+        {/* Aumentado de max-w-5xl para max-w-7xl */}
+        <div className="max-w-7xl mx-auto p-6 text-center"> 
             <h1 className="text-3xl font-bold">
               Condomínio Gilles Deleuze
             </h1>
@@ -360,7 +365,8 @@ export default function App() {
       </header>
 
       {/* Container principal com largura maior */}
-      <div className="max-w-5xl mx-auto px-4">
+      {/* Aumentado de max-w-5xl para max-w-7xl */}
+      <div className="max-w-7xl mx-auto px-4">
         
         {/* Mensagens de feedback */}
         {message && (
@@ -394,7 +400,7 @@ export default function App() {
               value={empresa}
               onChange={(e) => setEmpresa(e.target.value)}
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
-              // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
+              // Campo de entrada agora habilitado imediatamente
             />
             
             {/* Campo Data e Horário (lado a lado) */}
@@ -406,7 +412,7 @@ export default function App() {
                   value={data}
                   onChange={(e) => setData(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
-                  // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
+                  // Campo de entrada agora habilitado imediatamente
                 />
               </div>
               <div className="w-1/2">
@@ -416,7 +422,7 @@ export default function App() {
                   value={horario}
                   onChange={(e) => setHorario(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
-                  // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
+                  // Campo de entrada agora habilitado imediatamente
                 />
               </div>
             </div>
@@ -429,10 +435,10 @@ export default function App() {
               onChange={(e) => setObservacao(e.target.value)}
               rows="3"
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150 resize-none"
-              // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
+              // Campo de entrada agora habilitado imediatamente
             ></textarea>
 
-            {/* Botão Confirmar Registro (Ainda desabilitado se não houver autenticação) */}
+            {/* Botão Confirmar Registro (Desabilitado se não houver autenticação) */}
             <button
               onClick={handleAdd}
               className={`w-full font-bold py-3 rounded-md transition duration-200 shadow-md mt-4 ${
@@ -514,7 +520,7 @@ export default function App() {
       </div>
       
       {/* Exibir o ID do Usuário na parte inferior (Requisito de App Colaborativo) */}
-      <footer className="max-w-5xl mx-auto px-4 mt-8 pt-4 border-t text-sm text-gray-500 text-center">
+      <footer className="max-w-7xl mx-auto px-4 mt-8 pt-4 border-t text-sm text-gray-500 text-center">
         {userId && (
             <p>Seu ID de Usuário (Necessário para Colaboração): <span className="font-mono text-gray-700 break-all">{userId}</span></p>
         )}
