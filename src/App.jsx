@@ -29,13 +29,37 @@ import {
 // Código para gerar o ícone de edifício em Base64 (SVG) para o favicon
 const buildingSvgBase64 = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iIzFkNGVkOCI+PHBhdGggZD0iTTEyIDJMMzA3djEwbDlNNzVMMTUgMjVMMTUgMjVNNy43OCA1LjU2VjcuNzhMMTMgMTUuMzNMMTcgMTMuMTF2LTQuNDRMMTIgMTEiLz48L3N2Zz4='; 
 
-// --- Configuração do Firebase (Variáveis globais do ambiente) ---
-const firebaseConfig = JSON.parse(__firebase_config);
+/* -------------------------
+   FIREBASE - variáveis VITE
+   (definidas na Vercel / .env.local)
+-------------------------- */
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+};
+
+// Aviso se faltar variáveis (útil em dev)
+if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+  // Não impede o app de arrancar, só ajuda a diagnosticar
+  // eslint-disable-next-line no-console
+  console.warn('[Firebase] algumas variáveis VITE_FIREBASE_* não foram encontradas.');
+}
+
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
+// appId usado no path do Firestore — pode ser sobrescrito por VITE_APP_ID se quiser
+const appId = import.meta.env.VITE_APP_ID || firebaseConfig.projectId;
+
+/* -------------------------
+   COMponente App
+-------------------------- */
 export default function App() {
   const [user, setUser] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -52,69 +76,71 @@ export default function App() {
 
   // 0. Configurações de Aparência e Favicon
   useEffect(() => {
-    // 0.1 Definir Título da Página (Aba do Navegador)
     document.title = "Condomínio Gilles Deleuze";
 
-    // 0.2 Forçar a substituição do Ícone da Aba (Favicon)
     const setFavicon = () => {
-        // Remove qualquer ícone existente que possa estar sendo forçado pelo ambiente
-        const existingIcons = document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]');
-        existingIcons.forEach(icon => icon.remove());
+      const existingIcons = document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]');
+      existingIcons.forEach(icon => icon.remove());
 
-        // Cria o novo link de favicon usando o SVG Base64 gerado
-        const link = document.createElement('link');
-        link.rel = 'icon';
-        link.type = 'image/svg+xml';
-        link.href = buildingSvgBase64;
-        document.head.appendChild(link);
+      const link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = 'image/svg+xml';
+      link.href = buildingSvgBase64;
+      document.head.appendChild(link);
     };
     setFavicon();
-
   }, []);
 
-  // 1. Autenticação (Login Anônimo para acesso público)
+  // 1. Autenticação (usa token customizado se houver, senão anônimo)
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+        const token = import.meta.env.VITE_INITIAL_AUTH_TOKEN || null;
+        if (token) {
+          // tenta login com token customizado
+          await signInWithCustomToken(auth, token);
         } else {
-          // Se não houver token, faz login anônimo (acesso público)
           await signInAnonymously(auth);
         }
       } catch (error) {
+        // eslint-disable-next-line no-console
         console.error("Auth Error:", error);
       }
     };
-    
+
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setLoading(false);
+    });
+
     return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 2. Leitura de Dados em Tempo Real
   useEffect(() => {
     if (!user) return;
 
-    // O path 'public' é usado para dados compartilhados
     const ordersCollection = collection(db, 'artifacts', appId, 'public', 'data', 'service_orders');
 
     const unsubscribe = onSnapshot(ordersCollection, (snapshot) => {
-      const loadedOrders = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+      const loadedOrders = snapshot.docs.map(docItem => ({
+        id: docItem.id,
+        ...docItem.data()
       }));
 
-      // Ordena do mais novo para o mais antigo
+      // Ordena do mais novo para o mais antigo (tenta usar createdAt se disponível)
       loadedOrders.sort((a, b) => {
-        const dateA = new Date(`${a.serviceDate}T${a.serviceTime || '00:00'}`);
-        const dateB = new Date(`${b.serviceDate}T${b.serviceTime || '00:00'}`);
-        return dateB - dateA;
+        const timeA = a.createdAt && a.createdAt.seconds ? a.createdAt.seconds * 1000 : Date.parse(`${a.serviceDate}T${a.serviceTime || '00:00'}`);
+        const timeB = b.createdAt && b.createdAt.seconds ? b.createdAt.seconds * 1000 : Date.parse(`${b.serviceDate}T${b.serviceTime || '00:00'}`);
+        return timeB - timeA;
       });
 
       setOrders(loadedOrders);
       setLoading(false);
     }, (error) => {
+      // eslint-disable-next-line no-console
       console.error("Data Error:", error);
       setLoading(false);
     });
@@ -122,7 +148,7 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Manipular mudanças
+  // Manipular mudanças no formulário
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -136,7 +162,7 @@ export default function App() {
 
     try {
       const ordersCollection = collection(db, 'artifacts', appId, 'public', 'data', 'service_orders');
-      
+
       await addDoc(ordersCollection, {
         company: formData.company,
         serviceDate: formData.serviceDate,
@@ -156,8 +182,8 @@ export default function App() {
       setTimeout(() => setSuccessMsg(''), 3000);
 
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error("Save Error:", error);
-      // Aqui usamos window.alert() porque estamos fora do ambiente Canvas/Gemini.
       window.alert("Erro de conexão ao salvar.");
     } finally {
       setSubmitting(false);
@@ -174,6 +200,7 @@ export default function App() {
       setSuccessMsg('Registro removido.');
       setTimeout(() => setSuccessMsg(''), 3000);
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error("Delete Error:", error);
       window.alert("Erro ao excluir.");
     }
@@ -266,101 +293,4 @@ export default function App() {
                     required
                     type="time"
                     name="serviceTime"
-                    value={formData.serviceTime}
-                    onChange={handleChange}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Observações</label>
-              <textarea
-                name="notes"
-                value={formData.notes}
-                onChange={handleChange}
-                placeholder="Detalhes adicionais..."
-                rows="2"
-                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none text-sm"
-              ></textarea>
-            </div>
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className={`w-full py-2.5 rounded-lg font-medium text-white text-sm transition flex items-center justify-center gap-2 ${
-                submitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {submitting ? 'Processando...' : 'Confirmar Registro'}
-            </button>
-
-            {successMsg && (
-              <div className="bg-green-50 text-green-700 p-3 rounded-lg flex items-center gap-2 border border-green-200 text-sm animate-in fade-in">
-                <CheckCircle2 size={16} />
-                <span>{successMsg}</span>
-              </div>
-            )}
-          </form>
-        </section>
-
-        {/* Lista */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
-              Histórico de Entradas
-            </h3>
-            <span className="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200">
-              Total: {orders.length}
-            </span>
-          </div>
-
-          {loading ? (
-            <div className="text-center py-10 text-slate-400 text-sm">Carregando dados...</div>
-          ) : orders.length === 0 ? (
-            <div className="bg-white p-8 rounded-xl border border-slate-200 text-center text-slate-400">
-              <ClipboardList className="mx-auto mb-2 text-slate-300" size={32} />
-              <p className="text-sm">Nenhum registro encontrado.</p>
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {orders.map((order) => (
-                <div key={order.id} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 hover:border-blue-300 transition group relative">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 pr-8">
-                      <h4 className="font-semibold text-slate-800 text-base">{order.company}</h4>
-                      <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs text-slate-500">
-                        <span className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded">
-                          <Calendar size={12} />
-                          {new Date(order.serviceDate + 'T12:00:00').toLocaleDateString('pt-BR')}
-                        </span>
-                        <span className="flex items-center gap-1 bg-slate-50 px-2 py-1 rounded">
-                          <Clock size={12} />
-                          {order.serviceTime}
-                        </span>
-                      </div>
-                      {order.notes && (
-                        <p className="mt-2 text-slate-600 text-sm border-l-2 border-slate-200 pl-2">
-                          {order.notes}
-                        </p>
-                      )}
-                    </div>
-                    
-                    <button 
-                      onClick={() => handleDelete(order.id)}
-                      className="text-slate-300 hover:text-red-500 transition p-1.5 rounded hover:bg-red-50 absolute top-3 right-3"
-                      title="Remover"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
-  );
-}
+                    val
