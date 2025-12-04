@@ -1,42 +1,37 @@
 import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
+import { 
+    getAuth, 
+    signInAnonymously, 
+    signInWithCustomToken, 
+    onAuthStateChanged 
+} from "firebase/auth";
 import {
   getFirestore,
   collection,
   addDoc,
-  getDocs,
   deleteDoc,
   doc,
-  query,
-  orderBy,
+  onSnapshot, // Importado para escutar mudanças em tempo real
 } from "firebase/firestore";
 
 // ------------------------------
-// 🔥 CONFIG FIREBASE (CORRETO E CORRIGIDO)
+// 🔥 CONFIG FIREBASE
 // ------------------------------
-// ATENÇÃO: Configuração dinâmica usando __firebase_config (ambiente Canvas).
-// O fallback para VITE local deve ser feito com um objeto direto para evitar 
-// o aviso de compilação de 'import.meta.env'.
 let firebaseConfig;
 
-// 1. Tenta usar a configuração injetada pelo ambiente (Canvas)
 if (typeof __firebase_config !== 'undefined' && __firebase_config) {
   try {
     firebaseConfig = JSON.parse(__firebase_config);
   } catch (e) {
     console.error("Erro ao fazer parse de __firebase_config:", e);
-    // Em caso de erro, prossegue para o fallback
   }
 }
 
-// 2. Fallback para VITE local (simulação de carregamento de ENV para evitar erro de compilação)
 if (!firebaseConfig || !firebaseConfig.apiKey) {
-  console.warn("Aviso: Usando fallback de configuração. Se estiver no VITE, verifique suas variáveis .env. Usaremos chaves vazias para não quebrar a aplicação.");
-  // Usamos um objeto vazio ou mockado. Se o usuário estiver no VITE, ele deve ter acesso
-  // a um mecanismo de injeção que funcione sem 'import.meta.env' no código final.
-  // Para este ambiente, removemos o import.meta.env problemático.
+  console.warn("Aviso: Usando fallback de configuração. As operações de banco de dados podem falhar se o ambiente não fornecer a configuração.");
   firebaseConfig = {
-    apiKey: "YOUR_VITE_API_KEY", // Placeholder - Deve ser preenchido externamente no ambiente VITE
+    apiKey: "YOUR_VITE_API_KEY", 
     authDomain: "YOUR_VITE_AUTH_DOMAIN",
     projectId: "YOUR_VITE_PROJECT_ID",
     storageBucket: "YOUR_VITE_STORAGE_BUCKET",
@@ -46,15 +41,13 @@ if (!firebaseConfig || !firebaseConfig.apiKey) {
   };
 }
 
-// Verifica se a configuração foi carregada corretamente antes de inicializar o app
 if (!firebaseConfig || !firebaseConfig.apiKey || firebaseConfig.apiKey.startsWith("YOUR_")) {
     console.error("ERRO CRÍTICO: Configuração do Firebase parece ausente ou incompleta. As operações de banco de dados podem falhar.");
-    // O aplicativo tentará continuar, mas as operações do Firebase falharão.
 }
-
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app); // Instância de autenticação
 
 // ------------------------------
 // 🛠️ FUNÇÕES DE UTILIDADE
@@ -74,7 +67,7 @@ const { date: initialDate, time: initialTime } = getInitialDateTime();
 const formatDateTime = (isoString) => {
     if (!isoString) return "Data Inválida";
     const date = new Date(isoString);
-    if (isNaN(date)) return "Data Inválida";
+    if (isNaN(date.getTime())) return "Data Inválida";
     
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -84,6 +77,42 @@ const formatDateTime = (isoString) => {
     
     return `${day}/${month}/${year} às ${hour}:${minute}`;
 };
+
+// Componente Modal de Confirmação (Substitui window.confirm)
+const ConfirmationModal = ({ isOpen, onConfirm, onCancel, registro }) => {
+    if (!isOpen || !registro) return null;
+
+    return (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex justify-center items-center z-50 p-4">
+            <div className="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full">
+                <h3 className="text-xl font-bold text-red-600 mb-4">Confirmar Exclusão</h3>
+                <p className="text-gray-700 mb-6">
+                    Você tem certeza que deseja excluir o registro de:
+                </p>
+                <div className="bg-gray-100 p-3 rounded-md border border-gray-200 mb-6">
+                    <p className="font-semibold text-blue-700">{registro.empresa}</p>
+                    <p className="text-sm text-gray-500">{formatDateTime(registro.dataHora)}</p>
+                </div>
+                
+                <div className="flex justify-end space-x-3">
+                    <button
+                        onClick={onCancel}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 transition duration-150"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={onConfirm}
+                        className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition duration-150"
+                    >
+                        Excluir
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 
 // ------------------------------
 // 🔥 APP PRINCIPAL
@@ -95,70 +124,160 @@ export default function App() {
   const [horario, setHorario] = useState(initialTime);
   const [observacao, setObservacao] = useState("");
   const [message, setMessage] = useState(null);
+  const [filtro, setFiltro] = useState(""); // Estado para o filtro de busca
+  
+  // Estados de Autenticação
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [userId, setUserId] = useState(null);
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
+  // Estado do Modal
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [registroToDelete, setRegistroToDelete] = useState(null);
+  
   // Função para limpar a mensagem após um tempo
   const clearMessage = () => {
     setTimeout(() => setMessage(null), 4000);
   };
 
-  // Carregar dados (Histórico de Entradas)
-  const loadData = async () => {
-    try {
-        // Criamos uma query para ordenar por dataHora decrescente (mais recente primeiro)
-        const registrosCollection = collection(db, "registros_portaria");
-        
-        // ATENÇÃO: Evitamos orderBy no Firestore para evitar erros de índice. 
-        // Em vez disso, ordenamos os dados localmente.
-        const querySnapshot = await getDocs(registrosCollection);
-        
-        const lista = [];
-        querySnapshot.forEach((docu) => {
-          lista.push({ id: docu.id, ...docu.data() });
-        });
-        
-        // Ordenação local: mais recente primeiro
-        lista.sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
-
-        setRegistros(lista);
-    } catch (error) {
-        console.error("Erro ao carregar dados:", error);
-        setMessage({ text: "Erro ao carregar histórico. Verifique o Firebase.", type: "error" });
-        clearMessage();
-    }
-  };
-
+  // ----------------------------------------------------
+  // 🔑 1. EFEITO DE AUTENTICAÇÃO E CARREGAMENTO DO CSS
+  // ----------------------------------------------------
   useEffect(() => {
-    loadData();
-  }, []);
+    // ESTE BLOCO GARANTE QUE O TAILWIND CSS SEJA CARREGADO MESMO NO VERCEL/PRODUÇÃO
+    // Ele injeta o script CDN do Tailwind no cabeçalho do documento (Header).
+    const scriptId = 'tailwind-cdn-script';
+    if (!document.getElementById(scriptId)) {
+        const script = document.createElement('script');
+        script.src = "https://cdn.tailwindcss.com";
+        script.id = scriptId;
+        document.head.appendChild(script);
+    }
+    
+    // Configuração de autenticação
+    const handleAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Erro na autenticação Firebase:", error);
+      }
+    };
 
-  // Adicionar (Confirmar Registro)
+    handleAuth();
+
+    // Monitora as mudanças no estado de autenticação
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        setUserId(null);
+      }
+      setIsAuthReady(true); // A autenticação está pronta
+    });
+
+    return () => unsubscribe();
+  }, []); // Executa apenas na montagem do componente
+
+  // ----------------------------------------------------
+  // 📚 2. CARREGAR DADOS EM TEMPO REAL (onSnapshot)
+  // ----------------------------------------------------
+  useEffect(() => {
+    // Bloqueia se a autenticação não estiver pronta ou se não houver userId
+    if (!isAuthReady || !userId) {
+        console.warn("Autenticação não concluída. Pulando a escuta de dados.");
+        return;
+    }
+    
+    // Caminho da coleção seguindo as regras de segurança do Canvas (dados privados)
+    const collectionPath = `artifacts/${appId}/users/${userId}/registros_portaria`;
+    const registrosCollection = collection(db, collectionPath);
+    
+    // Configura a escuta em tempo real
+    const unsubscribe = onSnapshot(registrosCollection, (querySnapshot) => {
+        try {
+            const lista = [];
+            querySnapshot.forEach((docu) => {
+              lista.push({ id: docu.id, ...docu.data() });
+            });
+            
+            // Ordenação local: mais recente primeiro
+            lista.sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
+    
+            setRegistros(lista);
+            setMessage(null); // Limpa qualquer mensagem de erro anterior
+        } catch (error) {
+            console.error("Erro ao receber atualização de dados (onSnapshot):", error);
+            setMessage({ text: "Erro ao atualizar histórico. Verifique a conexão.", type: "error" });
+            clearMessage();
+        }
+    }, (error) => {
+        // Callback de erro do listener
+        console.error("Erro no listener onSnapshot:", error);
+        setMessage({ text: "Falha na conexão em tempo real. Erro de permissão.", type: "error" });
+        clearMessage();
+    });
+
+    // Função de limpeza: interrompe a escuta quando o componente é desmontado
+    return () => unsubscribe();
+  }, [isAuthReady, userId]); // Depende do estado de autenticação e do ID do usuário
+
+  // ----------------------------------------------------
+  // 3. LÓGICA DE FILTRAGEM
+  // ----------------------------------------------------
+  const registrosFiltrados = registros.filter(item => {
+    const termo = filtro.toLowerCase();
+    const empresaLower = item.empresa ? item.empresa.toLowerCase() : '';
+    const observacaoLower = item.observacao ? item.observacao.toLowerCase() : '';
+    const dataHoraLower = item.dataHora ? formatDateTime(item.dataHora).toLowerCase() : '';
+
+    return empresaLower.includes(termo) || 
+           observacaoLower.includes(termo) ||
+           dataHoraLower.includes(termo);
+  });
+
+
+  // ----------------------------------------------------
+  // ➕ 4. ADICIONAR REGISTRO
+  // ----------------------------------------------------
   const handleAdd = async () => {
+    if (!isAuthReady || !userId) {
+        setMessage({ text: "Aguarde a autenticação para registrar.", type: "error" }); 
+        clearMessage();
+        return;
+    }
+    
     if (!empresa || !data || !horario) {
       setMessage({ text: "Empresa, Data e Horário são obrigatórios!", type: "error" }); 
       clearMessage();
       return;
     }
 
+    const collectionPath = `artifacts/${appId}/users/${userId}/registros_portaria`;
+
     try {
         // Combina data e horário para um único ISO string (Timestamp)
         const dataHoraRegistro = new Date(`${data}T${horario}:00`).toISOString();
         
-        await addDoc(collection(db, "registros_portaria"), {
+        await addDoc(collection(db, collectionPath), {
           empresa: empresa,
           dataHora: dataHoraRegistro,
           observacao: observacao || "Sem observação",
         });
 
-        // Limpa os campos, mas mantém a data/hora atuais para facilitar novos registros
+        // Limpa os campos
         setEmpresa("");
         setObservacao("");
         
-        // Atualiza a lista e define uma nova data/hora inicial para o próximo registro
+        // Define nova data/hora inicial
         const newInitial = getInitialDateTime();
         setData(newInitial.date);
         setHorario(newInitial.time);
         
-        loadData();
+        // O onSnapshot cuidará de recarregar a lista
         setMessage({ text: "Registro salvo com sucesso!", type: "success" });
         clearMessage();
     } catch (error) {
@@ -168,15 +287,36 @@ export default function App() {
     }
   };
 
-  // Excluir
-  const handleDelete = async (id) => {
-    if (!window.confirm("Tem certeza que deseja excluir este registro?")) {
+  // ----------------------------------------------------
+  // 🗑️ 5. EXCLUIR REGISTRO 
+  // ----------------------------------------------------
+  // 1. Abre o modal de confirmação
+  const openDeleteModal = (id) => {
+      if (!isAuthReady || !userId) {
+        setMessage({ text: "Aguarde a autenticação para excluir.", type: "error" }); 
+        clearMessage();
         return;
-    }
+      }
+      const registro = registros.find(r => r.id === id);
+      if (registro) {
+          setRegistroToDelete(registro);
+          setIsModalOpen(true);
+      }
+  };
+
+  // 2. Confirma a exclusão e executa a operação
+  const confirmDelete = async () => {
+    if (!registroToDelete || !userId) return;
+
+    setIsModalOpen(false); // Fecha o modal
     
+    const docPath = `artifacts/${appId}/users/${userId}/registros_portaria/${registroToDelete.id}`;
+
     try {
-        await deleteDoc(doc(db, "registros_portaria", id));
-        loadData();
+        await deleteDoc(doc(db, docPath));
+        setRegistroToDelete(null);
+        
+        // O onSnapshot cuidará de recarregar a lista
         setMessage({ text: "Registro excluído com sucesso!", type: "success" });
         clearMessage();
     } catch (error) {
@@ -186,13 +326,28 @@ export default function App() {
     }
   };
 
+  // 3. Cancela a exclusão
+  const cancelDelete = () => {
+      setIsModalOpen(false);
+      setRegistroToDelete(null);
+  };
+
+
   // ------------------------------
-  // 🎨 LAYOUT IDÊNTICO À IMAGEM
+  // 🎨 LAYOUT
   // ------------------------------
   return (
     <div className="min-h-screen bg-gray-50 pb-10">
       
-      {/* Cabeçalho Condomínio Gilles Deleuze - Idêntico à imagem */}
+      {/* Modal de Confirmação */}
+      <ConfirmationModal 
+          isOpen={isModalOpen} 
+          onConfirm={confirmDelete} 
+          onCancel={cancelDelete} 
+          registro={registroToDelete} 
+      />
+      
+      {/* Cabeçalho */}
       <header className="bg-blue-800 text-white shadow-xl mb-8">
         <div className="max-w-3xl mx-auto p-6 text-center">
             <h1 className="text-3xl font-bold">
@@ -206,7 +361,7 @@ export default function App() {
 
       <div className="max-w-3xl mx-auto px-4">
         
-        {/* Mensagens de feedback (similar ao box verde na imagem) */}
+        {/* Mensagens de feedback */}
         {message && (
           <div className={`p-4 mb-6 rounded-lg font-medium text-center ${
             message.type === 'error' 
@@ -217,7 +372,14 @@ export default function App() {
           </div>
         )}
 
-        {/* Formulário de Novo Registro - Idêntico à imagem */}
+        {/* Indicador de Autenticação/Carregamento */}
+        {!isAuthReady && (
+            <div className="p-4 mb-6 rounded-lg font-medium text-center bg-yellow-100 text-yellow-700 border border-yellow-300">
+                Aguardando autenticação e carregamento de dados...
+            </div>
+        )}
+
+        {/* Formulário de Novo Registro */}
         <div className="bg-white p-6 rounded-lg shadow-md mb-8">
           <h2 className="text-2xl font-semibold text-gray-800 mb-6">
             Novo Registro
@@ -231,6 +393,7 @@ export default function App() {
               value={empresa}
               onChange={(e) => setEmpresa(e.target.value)}
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+              disabled={!isAuthReady || !userId}
             />
             
             {/* Campo Data e Horário (lado a lado) */}
@@ -242,6 +405,7 @@ export default function App() {
                   value={data}
                   onChange={(e) => setData(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+                  disabled={!isAuthReady || !userId}
                 />
               </div>
               <div className="w-1/2">
@@ -251,6 +415,7 @@ export default function App() {
                   value={horario}
                   onChange={(e) => setHorario(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+                  disabled={!isAuthReady || !userId}
                 />
               </div>
             </div>
@@ -263,62 +428,87 @@ export default function App() {
               onChange={(e) => setObservacao(e.target.value)}
               rows="3"
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150 resize-none"
+              disabled={!isAuthReady || !userId}
             ></textarea>
 
             {/* Botão Confirmar Registro */}
             <button
               onClick={handleAdd}
-              className="w-full bg-blue-600 text-white font-bold py-3 rounded-md hover:bg-blue-700 transition duration-200 shadow-md mt-4"
+              className={`w-full font-bold py-3 rounded-md transition duration-200 shadow-md mt-4 ${
+                  !isAuthReady || !userId 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+              disabled={!isAuthReady || !userId}
             >
               Confirmar Registro
             </button>
           </div>
         </div>
 
-        {/* Histórico de Entradas - Idêntico à imagem */}
+        {/* Histórico de Entradas */}
         <h2 className="text-xl font-semibold text-gray-800 mb-4 border-b pb-2">
           HISTÓRICO DE ENTRADAS
         </h2>
         
-        {/* Total de Registros (simulando o "Total 0" da imagem) */}
-        <p className="text-right text-sm text-gray-500 mb-4">Total: {registros.length}</p>
+        {/* Campo de Filtro de Busca */}
+        <div className="mb-4">
+            <input
+                type="text"
+                placeholder="Filtrar por nome, observação ou data..."
+                value={filtro}
+                onChange={(e) => setFiltro(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+            />
+        </div>
+
+        {/* Total de Registros (Filtrados) */}
+        <p className="text-right text-sm text-gray-500 mb-4">
+            Mostrando: {registrosFiltrados.length} de {registros.length} registros
+        </p>
 
         <ul className="space-y-3">
-          {registros.length === 0 ? (
-            <li className="p-4 bg-white border border-gray-200 rounded-lg text-center text-gray-500 shadow-sm">
-              Nenhum registro encontrado.
-            </li>
-          ) : (
-            registros.map((item) => (
-              <li 
-                key={item.id} 
-                className="flex justify-between items-center p-4 bg-white border border-gray-200 rounded-lg shadow-sm"
-              >
-                <div className="text-gray-700 flex-grow pr-4">
-                  <span className="font-bold text-lg text-blue-700 block">
-                    {item.empresa}
-                  </span>
-                  <span className="text-sm text-gray-600 mt-1 block">
-                    {formatDateTime(item.dataHora)}
-                  </span>
-                  <span className={`text-xs mt-1 block ${item.observacao === "Sem observação" ? 'text-gray-400 italic' : 'text-gray-500'}`}>
-                    {item.observacao}
-                  </span>
-                </div>
-
-                {/* Ícone de Lixo (Deletar) */}
-                <button
-                  onClick={() => handleDelete(item.id)}
-                  className="text-gray-400 hover:text-red-600 transition duration-200 p-2 rounded-full"
-                  title="Excluir Registro"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clipRule="evenodd" />
-                  </svg>
-                </button>
+          {
+            !isAuthReady || !userId ? (
+              <li className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-center text-gray-700 shadow-sm">
+                Conectando ao banco de dados...
               </li>
-            ))
-          )}
+            ) : registrosFiltrados.length === 0 ? (
+              <li className="p-4 bg-white border border-gray-200 rounded-lg text-center text-gray-500 shadow-sm">
+                {filtro ? "Nenhum registro corresponde ao filtro." : "Nenhum registro encontrado."}
+              </li>
+            ) : (
+              registrosFiltrados.map((item) => (
+                <li 
+                  key={item.id} 
+                  className="flex justify-between items-center p-4 bg-white border border-gray-200 rounded-lg shadow-sm"
+                >
+                  <div className="text-gray-700 flex-grow pr-4">
+                    <span className="font-bold text-lg text-blue-700 block">
+                      {item.empresa}
+                    </span>
+                    <span className="text-sm text-gray-600 mt-1 block">
+                      {formatDateTime(item.dataHora)}
+                    </span>
+                    <span className={`text-xs mt-1 block ${item.observacao === "Sem observação" ? 'text-gray-400 italic' : 'text-gray-500'}`}>
+                      {item.observacao}
+                    </span>
+                  </div>
+
+                  {/* Ícone de Lixo (Deletar) - Abre o modal */}
+                  <button
+                    onClick={() => openDeleteModal(item.id)}
+                    className="text-gray-400 hover:text-red-600 transition duration-200 p-2 rounded-full"
+                    title="Excluir Registro"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                </li>
+              ))
+            )
+          }
         </ul>
       </div>
     </div>
