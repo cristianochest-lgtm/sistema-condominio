@@ -349,7 +349,7 @@ export default function App() {
       
       {/* Cabeçalho */}
       <header className="bg-blue-800 text-white shadow-xl mb-8">
-        <div className="max-w-3xl mx-auto p-6 text-center">
+        <div className="max-w-5xl mx-auto p-6 text-center"> {/* Aumenta a largura máxima para 5xl */}
             <h1 className="text-3xl font-bold">
               Condomínio Gilles Deleuze
             </h1>
@@ -359,7 +359,8 @@ export default function App() {
         </div>
       </header>
 
-      <div className="max-w-3xl mx-auto px-4">
+      {/* Container principal com largura maior */}
+      <div className="max-w-5xl mx-auto px-4">
         
         {/* Mensagens de feedback */}
         {message && (
@@ -378,7 +379,7 @@ export default function App() {
                 Aguardando autenticação e carregamento de dados...
             </div>
         )}
-
+        
         {/* Formulário de Novo Registro */}
         <div className="bg-white p-6 rounded-lg shadow-md mb-8">
           <h2 className="text-2xl font-semibold text-gray-800 mb-6">
@@ -393,7 +394,7 @@ export default function App() {
               value={empresa}
               onChange={(e) => setEmpresa(e.target.value)}
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
-              disabled={!isAuthReady || !userId}
+              // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
             />
             
             {/* Campo Data e Horário (lado a lado) */}
@@ -405,7 +406,7 @@ export default function App() {
                   value={data}
                   onChange={(e) => setData(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
-                  disabled={!isAuthReady || !userId}
+                  // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
                 />
               </div>
               <div className="w-1/2">
@@ -415,7 +416,7 @@ export default function App() {
                   value={horario}
                   onChange={(e) => setHorario(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150"
-                  disabled={!isAuthReady || !userId}
+                  // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
                 />
               </div>
             </div>
@@ -428,10 +429,10 @@ export default function App() {
               onChange={(e) => setObservacao(e.target.value)}
               rows="3"
               className="w-full p-3 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 transition duration-150 resize-none"
-              disabled={!isAuthReady || !userId}
+              // REMOVIDO: disabled={!isAuthReady || !userId} -> Permitindo preencher antes da autenticação
             ></textarea>
 
-            {/* Botão Confirmar Registro */}
+            {/* Botão Confirmar Registro (Ainda desabilitado se não houver autenticação) */}
             <button
               onClick={handleAdd}
               className={`w-full font-bold py-3 rounded-md transition duration-200 shadow-md mt-4 ${
@@ -439,7 +440,7 @@ export default function App() {
                   ? 'bg-gray-400 cursor-not-allowed' 
                   : 'bg-blue-600 hover:bg-blue-700 text-white'
               }`}
-              disabled={!isAuthReady || !userId}
+              disabled={!isAuthReady || !userId} // MANTÉM ESSA CHECAGEM AQUI!
             >
               Confirmar Registro
             </button>
@@ -511,6 +512,13 @@ export default function App() {
           }
         </ul>
       </div>
+      
+      {/* Exibir o ID do Usuário na parte inferior (Requisito de App Colaborativo) */}
+      <footer className="max-w-5xl mx-auto px-4 mt-8 pt-4 border-t text-sm text-gray-500 text-center">
+        {userId && (
+            <p>Seu ID de Usuário (Necessário para Colaboração): <span className="font-mono text-gray-700 break-all">{userId}</span></p>
+        )}
+      </footer>
     </div>
   );
 }
